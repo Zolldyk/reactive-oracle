@@ -116,35 +116,39 @@ contract ChainlinkMirrorReactive is AbstractReactive {
         i_originHelper = originHelper;
         i_feedProxy = feedProxy;
 
-        // Subscribe to Chainlink AnswerUpdated events on origin chain
-        service.subscribe(
-            originChainId,
-            chainlinkFeed,
-            uint256(ANSWER_UPDATED_TOPIC),
-            REACTIVE_IGNORE,
-            REACTIVE_IGNORE,
-            REACTIVE_IGNORE
-        );
+        // Only subscribe when deployed on Reactive Network (not on origin/destination chains)
+        // vm = true means we're NOT on Reactive Network (no system contract exists)
+        if (!vm) {
+            // Subscribe to Chainlink AnswerUpdated events on origin chain
+            service.subscribe(
+                originChainId,
+                chainlinkFeed,
+                uint256(ANSWER_UPDATED_TOPIC),
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE
+            );
 
-        // Subscribe to RoundDataReceived events from EnhancedOriginHelper
-        service.subscribe(
-            originChainId,
-            originHelper,
-            uint256(ROUND_DATA_RECEIVED_TOPIC),
-            REACTIVE_IGNORE,
-            REACTIVE_IGNORE,
-            REACTIVE_IGNORE
-        );
+            // Subscribe to RoundDataReceived events from EnhancedOriginHelper
+            service.subscribe(
+                originChainId,
+                originHelper,
+                uint256(ROUND_DATA_RECEIVED_TOPIC),
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE
+            );
 
-        // Subscribe to Cron100 heartbeat for fallback checks
-        service.subscribe(
-            REACTIVE_CHAIN_ID,
-            address(0),
-            uint256(CRON_100_TOPIC),
-            REACTIVE_IGNORE,
-            REACTIVE_IGNORE,
-            REACTIVE_IGNORE
-        );
+            // Subscribe to Cron100 heartbeat for fallback checks
+            service.subscribe(
+                REACTIVE_CHAIN_ID,
+                address(0),
+                uint256(CRON_100_TOPIC),
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE
+            );
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
