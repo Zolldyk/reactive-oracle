@@ -5,7 +5,7 @@ pragma solidity ^0.8.24;
 
 import {Script, console} from "forge-std/Script.sol";
 import {ChainlinkMirrorReactive} from "../src/reactive/ChainlinkMirrorReactive.sol";
-import {SEPOLIA_CHAIN_ID, LASNA_CHAIN_ID, CHAINLINK_ETH_USD} from "../src/Constants.sol";
+import {SEPOLIA_CHAIN_ID, LASNA_CHAIN_ID, CHAINLINK_ETH_USD, CHAINLINK_ETH_USD_AGGREGATOR} from "../src/Constants.sol";
 
 /// @title DeployChainlinkMirrorReactive
 /// @author Reactive Oracle Team
@@ -28,7 +28,8 @@ contract DeployChainlinkMirrorReactive is Script {
         console.log("Deploying ChainlinkMirrorReactive to Reactive Network...");
         console.log("Origin Chain ID (Sepolia):", SEPOLIA_CHAIN_ID);
         console.log("Destination Chain ID (Lasna):", LASNA_CHAIN_ID);
-        console.log("Chainlink ETH/USD Feed:", CHAINLINK_ETH_USD);
+        console.log("Chainlink ETH/USD Proxy:", CHAINLINK_ETH_USD);
+        console.log("Chainlink ETH/USD Aggregator:", CHAINLINK_ETH_USD_AGGREGATOR);
         console.log("Origin Helper:", originHelper);
         console.log("Feed Proxy:", feedProxy);
 
@@ -37,6 +38,7 @@ contract DeployChainlinkMirrorReactive is Script {
             SEPOLIA_CHAIN_ID,
             LASNA_CHAIN_ID,
             CHAINLINK_ETH_USD,
+            CHAINLINK_ETH_USD_AGGREGATOR,
             originHelper,
             feedProxy
         );

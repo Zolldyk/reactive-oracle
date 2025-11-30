@@ -12,6 +12,7 @@ contract ChainlinkMirrorReactiveTest is Test {
     MockSystemContract private s_mockSystem;
 
     address private s_chainlinkFeed;
+    address private s_chainlinkAggregator;
     address private s_originHelper;
     address private s_feedProxy;
 
@@ -21,7 +22,8 @@ contract ChainlinkMirrorReactiveTest is Test {
     // Event topic constants (matching the contract)
     bytes32 private constant ANSWER_UPDATED_TOPIC = keccak256("AnswerUpdated(int256,uint256,uint256)");
     bytes32 private constant ROUND_DATA_RECEIVED_TOPIC = keccak256("RoundDataReceived(uint80,int256,uint256,uint256,uint80)");
-    bytes32 private constant CRON_100_TOPIC = bytes32(uint256(0x64));
+    // Cron100 topic from Reactive Network docs
+    bytes32 private constant CRON_100_TOPIC = 0xb49937fb8970e19fd46d48f7e3fb00d659deac0347f79cd7cb542f0fc1503c70;
 
     // System contract address
     address payable private constant SYSTEM_CONTRACT = payable(0x0000000000000000000000000000000000fffFfF);
@@ -35,6 +37,7 @@ contract ChainlinkMirrorReactiveTest is Test {
 
     function setUp() public {
         s_chainlinkFeed = makeAddr("chainlinkFeed");
+        s_chainlinkAggregator = makeAddr("chainlinkAggregator");
         s_originHelper = makeAddr("originHelper");
         s_feedProxy = makeAddr("feedProxy");
 
@@ -47,6 +50,7 @@ contract ChainlinkMirrorReactiveTest is Test {
             ORIGIN_CHAIN_ID,
             DESTINATION_CHAIN_ID,
             s_chainlinkFeed,
+            s_chainlinkAggregator,
             s_originHelper,
             s_feedProxy
         );
@@ -59,27 +63,32 @@ contract ChainlinkMirrorReactiveTest is Test {
     // ============ Constructor Tests (Task 14) ============
 
     function test_Constructor_SetsOriginChainId() public view {
-        (uint256 originChainId,,,,) = s_reactive.getConfiguration();
+        (uint256 originChainId,,,,,) = s_reactive.getConfiguration();
         assertEq(originChainId, ORIGIN_CHAIN_ID);
     }
 
     function test_Constructor_SetsDestinationChainId() public view {
-        (, uint256 destinationChainId,,,) = s_reactive.getConfiguration();
+        (, uint256 destinationChainId,,,,) = s_reactive.getConfiguration();
         assertEq(destinationChainId, DESTINATION_CHAIN_ID);
     }
 
     function test_Constructor_SetsChainlinkFeed() public view {
-        (,, address chainlinkFeed,,) = s_reactive.getConfiguration();
+        (,, address chainlinkFeed,,,) = s_reactive.getConfiguration();
         assertEq(chainlinkFeed, s_chainlinkFeed);
     }
 
+    function test_Constructor_SetsChainlinkAggregator() public view {
+        (,,, address chainlinkAggregator,,) = s_reactive.getConfiguration();
+        assertEq(chainlinkAggregator, s_chainlinkAggregator);
+    }
+
     function test_Constructor_SetsOriginHelper() public view {
-        (,,, address originHelper,) = s_reactive.getConfiguration();
+        (,,,, address originHelper,) = s_reactive.getConfiguration();
         assertEq(originHelper, s_originHelper);
     }
 
     function test_Constructor_SetsFeedProxy() public view {
-        (,,,, address feedProxy) = s_reactive.getConfiguration();
+        (,,,,, address feedProxy) = s_reactive.getConfiguration();
         assertEq(feedProxy, s_feedProxy);
     }
 
@@ -88,6 +97,7 @@ contract ChainlinkMirrorReactiveTest is Test {
             uint256 originChainId,
             uint256 destinationChainId,
             address chainlinkFeed,
+            address chainlinkAggregator,
             address originHelper,
             address feedProxy
         ) = s_reactive.getConfiguration();
@@ -95,6 +105,7 @@ contract ChainlinkMirrorReactiveTest is Test {
         assertEq(originChainId, ORIGIN_CHAIN_ID);
         assertEq(destinationChainId, DESTINATION_CHAIN_ID);
         assertEq(chainlinkFeed, s_chainlinkFeed);
+        assertEq(chainlinkAggregator, s_chainlinkAggregator);
         assertEq(originHelper, s_originHelper);
         assertEq(feedProxy, s_feedProxy);
     }
@@ -102,7 +113,7 @@ contract ChainlinkMirrorReactiveTest is Test {
     // ============ Event Subscription Tests (Task 15) ============
     // Note: Subscription calls happen in constructor, we verify via mock
 
-    function test_Constructor_SubscribesToAnswerUpdated() public {
+    function test_InitSubscriptions_SubscribesToAnswerUpdated() public {
         // Deploy fresh mock at a different address to capture subscriptions cleanly
         MockSystemContract freshMock = new MockSystemContract();
 
@@ -112,36 +123,46 @@ contract ChainlinkMirrorReactiveTest is Test {
         vm.store(SYSTEM_CONTRACT, bytes32(uint256(0)), bytes32(0)); // subscriptions array length
         vm.store(SYSTEM_CONTRACT, bytes32(uint256(1)), bytes32(0)); // subscriptionCount
 
-        new ChainlinkMirrorReactive(
+        ChainlinkMirrorReactive reactive = new ChainlinkMirrorReactive(
             ORIGIN_CHAIN_ID,
             DESTINATION_CHAIN_ID,
             s_chainlinkFeed,
+            s_chainlinkAggregator,
             s_originHelper,
             s_feedProxy
         );
+
+        // Call initSubscriptions to register subscriptions
+        reactive.initSubscriptions();
 
         // Verify subscriptions were made
         MockSystemContract mockAtAddr = MockSystemContract(SYSTEM_CONTRACT);
         assertEq(mockAtAddr.subscriptionCount(), 3);
 
-        // First subscription should be AnswerUpdated
+        // First subscription should be AnswerUpdated from AGGREGATOR (not proxy)
         (uint256 chainId, address contractAddr, uint256 topic0,,,) = mockAtAddr.subscriptions(0);
         assertEq(chainId, ORIGIN_CHAIN_ID);
-        assertEq(contractAddr, s_chainlinkFeed);
+        assertEq(contractAddr, s_chainlinkAggregator);
         assertEq(topic0, uint256(ANSWER_UPDATED_TOPIC));
     }
 
-    function test_Constructor_SubscribesToRoundDataReceived() public {
+    function test_InitSubscriptions_SubscribesToRoundDataReceived() public {
         MockSystemContract newMock = new MockSystemContract();
         vm.etch(SYSTEM_CONTRACT, address(newMock).code);
+        vm.store(SYSTEM_CONTRACT, bytes32(uint256(0)), bytes32(0)); // Clear subscriptions
+        vm.store(SYSTEM_CONTRACT, bytes32(uint256(1)), bytes32(0)); // Clear count
 
-        new ChainlinkMirrorReactive(
+        ChainlinkMirrorReactive reactive = new ChainlinkMirrorReactive(
             ORIGIN_CHAIN_ID,
             DESTINATION_CHAIN_ID,
             s_chainlinkFeed,
+            s_chainlinkAggregator,
             s_originHelper,
             s_feedProxy
         );
+
+        // Call initSubscriptions to register subscriptions
+        reactive.initSubscriptions();
 
         MockSystemContract mockAtAddr = MockSystemContract(SYSTEM_CONTRACT);
 
@@ -152,17 +173,23 @@ contract ChainlinkMirrorReactiveTest is Test {
         assertEq(topic0, uint256(ROUND_DATA_RECEIVED_TOPIC));
     }
 
-    function test_Constructor_SubscribesToCron100() public {
+    function test_InitSubscriptions_SubscribesToCron100() public {
         MockSystemContract newMock = new MockSystemContract();
         vm.etch(SYSTEM_CONTRACT, address(newMock).code);
+        vm.store(SYSTEM_CONTRACT, bytes32(uint256(0)), bytes32(0)); // Clear subscriptions
+        vm.store(SYSTEM_CONTRACT, bytes32(uint256(1)), bytes32(0)); // Clear count
 
-        new ChainlinkMirrorReactive(
+        ChainlinkMirrorReactive reactive = new ChainlinkMirrorReactive(
             ORIGIN_CHAIN_ID,
             DESTINATION_CHAIN_ID,
             s_chainlinkFeed,
+            s_chainlinkAggregator,
             s_originHelper,
             s_feedProxy
         );
+
+        // Call initSubscriptions to register subscriptions
+        reactive.initSubscriptions();
 
         MockSystemContract mockAtAddr = MockSystemContract(SYSTEM_CONTRACT);
 
@@ -178,7 +205,7 @@ contract ChainlinkMirrorReactiveTest is Test {
     function test_React_RoutesToAnswerUpdatedHandler() public {
         IReactive.LogRecord memory log = _createLogRecord(
             ORIGIN_CHAIN_ID,
-            s_chainlinkFeed,
+            s_chainlinkAggregator,
             ANSWER_UPDATED_TOPIC,
             100_00000000, // answer in topic_1
             1, // roundId in topic_2
@@ -242,10 +269,10 @@ contract ChainlinkMirrorReactiveTest is Test {
     }
 
     function test_React_RevertsOnWrongOriginForAnswerUpdated() public {
-        address wrongOrigin = makeAddr("wrongOrigin");
+        // Using chainlinkFeed (proxy) instead of aggregator should revert
         IReactive.LogRecord memory log = _createLogRecord(
             ORIGIN_CHAIN_ID,
-            wrongOrigin,
+            s_chainlinkFeed, // Wrong! Should be s_chainlinkAggregator
             ANSWER_UPDATED_TOPIC,
             100_00000000,
             1,
@@ -284,7 +311,7 @@ contract ChainlinkMirrorReactiveTest is Test {
     function test_HandleAnswerUpdated_EmitsRoundProcessingStarted() public {
         IReactive.LogRecord memory log = _createLogRecord(
             ORIGIN_CHAIN_ID,
-            s_chainlinkFeed,
+            s_chainlinkAggregator,
             ANSWER_UPDATED_TOPIC,
             100_00000000,
             1,
@@ -300,7 +327,7 @@ contract ChainlinkMirrorReactiveTest is Test {
     function test_HandleAnswerUpdated_EmitsCallbackToOriginHelper() public {
         IReactive.LogRecord memory log = _createLogRecord(
             ORIGIN_CHAIN_ID,
-            s_chainlinkFeed,
+            s_chainlinkAggregator,
             ANSWER_UPDATED_TOPIC,
             100_00000000,
             1,
@@ -326,7 +353,7 @@ contract ChainlinkMirrorReactiveTest is Test {
         // Try to process round 1 again
         IReactive.LogRecord memory log = _createLogRecord(
             ORIGIN_CHAIN_ID,
-            s_chainlinkFeed,
+            s_chainlinkAggregator,
             ANSWER_UPDATED_TOPIC,
             100_00000000,
             1,
@@ -346,7 +373,7 @@ contract ChainlinkMirrorReactiveTest is Test {
         // Try to process round 1 again while still pending
         IReactive.LogRecord memory log = _createLogRecord(
             ORIGIN_CHAIN_ID,
-            s_chainlinkFeed,
+            s_chainlinkAggregator,
             ANSWER_UPDATED_TOPIC,
             100_00000000,
             1,
@@ -367,7 +394,7 @@ contract ChainlinkMirrorReactiveTest is Test {
         // Try to process round 3 (lower than last processed)
         IReactive.LogRecord memory log = _createLogRecord(
             ORIGIN_CHAIN_ID,
-            s_chainlinkFeed,
+            s_chainlinkAggregator,
             ANSWER_UPDATED_TOPIC,
             100_00000000,
             3,
@@ -531,7 +558,7 @@ contract ChainlinkMirrorReactiveTest is Test {
 
         IReactive.LogRecord memory log = _createLogRecord(
             ORIGIN_CHAIN_ID,
-            s_chainlinkFeed,
+            s_chainlinkAggregator,
             ANSWER_UPDATED_TOPIC,
             100_00000000,
             roundId,
@@ -587,7 +614,7 @@ contract ChainlinkMirrorReactiveTest is Test {
         // Try to process lower round
         IReactive.LogRecord memory log = _createLogRecord(
             ORIGIN_CHAIN_ID,
-            s_chainlinkFeed,
+            s_chainlinkAggregator,
             ANSWER_UPDATED_TOPIC,
             100_00000000,
             lowRound,
@@ -629,7 +656,7 @@ contract ChainlinkMirrorReactiveTest is Test {
     function _processAnswerUpdated(uint80 roundId, int256 answer) internal {
         IReactive.LogRecord memory log = _createLogRecord(
             ORIGIN_CHAIN_ID,
-            s_chainlinkFeed,
+            s_chainlinkAggregator,
             ANSWER_UPDATED_TOPIC,
             uint256(int256(answer)), // answer in topic_1 (cast via int256 to preserve sign info as uint256)
             roundId, // roundId in topic_2

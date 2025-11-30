@@ -45,7 +45,8 @@ contract ChainlinkMirrorReactive is AbstractReactive {
     bytes32 public constant ROUND_DATA_RECEIVED_TOPIC = keccak256("RoundDataReceived(uint80,int256,uint256,uint256,uint80)");
 
     /// @notice Cron100 heartbeat topic for ~12 minute intervals
-    bytes32 public constant CRON_100_TOPIC = bytes32(uint256(0x64));
+    /// @dev Topic hash from Reactive Network docs: keccak256 of cron block interval
+    bytes32 public constant CRON_100_TOPIC = 0xb49937fb8970e19fd46d48f7e3fb00d659deac0347f79cd7cb542f0fc1503c70;
 
     /*//////////////////////////////////////////////////////////////
                             STATE VARIABLES
@@ -57,8 +58,12 @@ contract ChainlinkMirrorReactive is AbstractReactive {
     /// @notice Destination chain ID where FeedProxy is deployed
     uint256 private immutable i_destinationChainId;
 
-    /// @notice Chainlink aggregator address on origin chain
+    /// @notice Chainlink proxy address on origin chain (for data queries)
     address private immutable i_chainlinkFeed;
+
+    /// @notice Chainlink aggregator address on origin chain (emits AnswerUpdated events)
+    /// @dev This is the underlying aggregator that the proxy points to
+    address private immutable i_chainlinkAggregator;
 
     /// @notice EnhancedOriginHelper address on origin chain
     address private immutable i_originHelper;
@@ -93,6 +98,11 @@ contract ChainlinkMirrorReactive is AbstractReactive {
     /// @param timestamp The timestamp of the cron trigger
     event CronFallbackTriggered(uint256 timestamp);
 
+    /// @notice Emitted when subscriptions are initialized
+    /// @param chainlinkFeed Address of the Chainlink feed subscribed to
+    /// @param originHelper Address of the origin helper subscribed to
+    event SubscriptionsInitialized(address indexed chainlinkFeed, address indexed originHelper);
+
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
@@ -100,55 +110,100 @@ contract ChainlinkMirrorReactive is AbstractReactive {
     /// @notice Initializes the reactive contract with chain and contract configuration
     /// @param originChainId Origin chain ID where Chainlink feeds exist
     /// @param destinationChainId Destination chain ID where FeedProxy is deployed
-    /// @param chainlinkFeed Chainlink aggregator address on origin chain
+    /// @param chainlinkFeed Chainlink proxy address on origin chain (for data queries)
+    /// @param chainlinkAggregator Chainlink aggregator address that emits AnswerUpdated events
     /// @param originHelper EnhancedOriginHelper address on origin chain
     /// @param feedProxy FeedProxy address on destination chain
     constructor(
         uint256 originChainId,
         uint256 destinationChainId,
         address chainlinkFeed,
+        address chainlinkAggregator,
         address originHelper,
         address feedProxy
     ) {
         i_originChainId = originChainId;
         i_destinationChainId = destinationChainId;
         i_chainlinkFeed = chainlinkFeed;
+        i_chainlinkAggregator = chainlinkAggregator;
         i_originHelper = originHelper;
         i_feedProxy = feedProxy;
 
-        // Only subscribe when deployed on Reactive Network (not on origin/destination chains)
-        // vm = true means we're NOT on Reactive Network (no system contract exists)
-        if (!vm) {
-            // Subscribe to Chainlink AnswerUpdated events on origin chain
-            service.subscribe(
-                originChainId,
-                chainlinkFeed,
-                uint256(ANSWER_UPDATED_TOPIC),
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE
-            );
+        // Note: Subscriptions are initialized separately via initSubscriptions()
+        // This allows deployment to succeed even if subscriptions fail initially
+    }
 
-            // Subscribe to RoundDataReceived events from EnhancedOriginHelper
-            service.subscribe(
-                originChainId,
-                originHelper,
-                uint256(ROUND_DATA_RECEIVED_TOPIC),
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE
-            );
+    /// @notice Initializes event subscriptions on Reactive Network
+    /// @dev Must be called after deployment when on Reactive Network
+    /// @dev Can only be called on Reactive Network (when vm = false)
+    function initSubscriptions() external rnOnly {
+        // Subscribe to Chainlink AnswerUpdated events on origin chain
+        // IMPORTANT: Subscribe to the AGGREGATOR address, not the proxy!
+        // The proxy doesn't emit events - the underlying aggregator does.
+        service.subscribe(
+            i_originChainId,
+            i_chainlinkAggregator,
+            uint256(ANSWER_UPDATED_TOPIC),
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE
+        );
 
-            // Subscribe to Cron100 heartbeat for fallback checks
-            service.subscribe(
-                REACTIVE_CHAIN_ID,
-                address(0),
-                uint256(CRON_100_TOPIC),
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE
-            );
-        }
+        // Subscribe to RoundDataReceived events from EnhancedOriginHelper
+        service.subscribe(
+            i_originChainId,
+            i_originHelper,
+            uint256(ROUND_DATA_RECEIVED_TOPIC),
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE
+        );
+
+        // Subscribe to Cron100 heartbeat for fallback checks
+        service.subscribe(
+            REACTIVE_CHAIN_ID,
+            address(0),
+            uint256(CRON_100_TOPIC),
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE
+        );
+
+        emit SubscriptionsInitialized(i_chainlinkAggregator, i_originHelper);
+    }
+
+    /// @notice Unsubscribes from all event subscriptions
+    /// @dev Must be called on Reactive Network to clear stuck subscriptions
+    function unsubscribeAll() external rnOnly {
+        // Unsubscribe from Chainlink AnswerUpdated events
+        service.unsubscribe(
+            i_originChainId,
+            i_chainlinkAggregator,
+            uint256(ANSWER_UPDATED_TOPIC),
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE
+        );
+
+        // Unsubscribe from RoundDataReceived events
+        service.unsubscribe(
+            i_originChainId,
+            i_originHelper,
+            uint256(ROUND_DATA_RECEIVED_TOPIC),
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE
+        );
+
+        // Unsubscribe from Cron100 heartbeat
+        service.unsubscribe(
+            REACTIVE_CHAIN_ID,
+            address(0),
+            uint256(CRON_100_TOPIC),
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE,
+            REACTIVE_IGNORE
+        );
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -161,7 +216,7 @@ contract ChainlinkMirrorReactive is AbstractReactive {
         bytes32 topic0 = bytes32(log.topic_0);
         address origin = log._contract;
 
-        if (topic0 == ANSWER_UPDATED_TOPIC && origin == i_chainlinkFeed) {
+        if (topic0 == ANSWER_UPDATED_TOPIC && origin == i_chainlinkAggregator) {
             _handleAnswerUpdated(log);
         } else if (topic0 == ROUND_DATA_RECEIVED_TOPIC && origin == i_originHelper) {
             _handleRoundDataReceived(log);
@@ -281,7 +336,8 @@ contract ChainlinkMirrorReactive is AbstractReactive {
     /// @notice Returns the contract configuration
     /// @return originChainId Origin chain ID
     /// @return destinationChainId Destination chain ID
-    /// @return chainlinkFeed Chainlink aggregator address
+    /// @return chainlinkFeed Chainlink proxy address
+    /// @return chainlinkAggregator Chainlink aggregator address (emits events)
     /// @return originHelper EnhancedOriginHelper address
     /// @return feedProxy FeedProxy address
     function getConfiguration()
@@ -291,6 +347,7 @@ contract ChainlinkMirrorReactive is AbstractReactive {
             uint256 originChainId,
             uint256 destinationChainId,
             address chainlinkFeed,
+            address chainlinkAggregator,
             address originHelper,
             address feedProxy
         )
@@ -299,6 +356,7 @@ contract ChainlinkMirrorReactive is AbstractReactive {
             i_originChainId,
             i_destinationChainId,
             i_chainlinkFeed,
+            i_chainlinkAggregator,
             i_originHelper,
             i_feedProxy
         );

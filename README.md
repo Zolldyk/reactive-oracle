@@ -2,96 +2,224 @@
 
 Cross-chain Chainlink price feed mirroring using the Reactive Network.
 
-## Overview
+## Presentation
 
-Reactive Oracle mirrors Chainlink price feeds from Ethereum Sepolia to Reactive Lasna using the Reactive Network's cross-chain messaging capabilities. This enables DeFi applications on Lasna to access reliable Chainlink price data.
+🎥 [Watch the Project Presentation](https://www.loom.com/share/4fb7aacc426c4a5bbf62b593eaa0dc4e)
+
+## Problem Statement
+
+**The Reactive Lasna network does not have native access to Chainlink price oracles.** DeFi applications on Lasna requiring reliable price data cannot function without oracle access.
+
+Reactive Oracle solves this by mirroring Chainlink price feeds from Ethereum Sepolia to Reactive Lasna using the Reactive Network's cross-chain event-driven architecture. Applications on Lasna can consume price data via a standard `AggregatorV3Interface`, identical to how they would use Chainlink directly.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              REACTIVE NETWORK                                │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                         ReactVM (Per-Deployer)                       │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐   │   │
+│  │  │              ChainlinkMirrorReactive Contract                │   │   │
+│  │  │  • Subscribes to AnswerUpdated events (Sepolia)             │   │   │
+│  │  │  • Subscribes to RoundDataReceived events (Sepolia)         │   │   │
+│  │  │  • Processes Cron100 heartbeat (~12 min)                    │   │   │
+│  │  │  • Emits callbacks to origin and destination chains         │   │   │
+│  │  └─────────────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+            │                                           │
+            │ Callback 1: enrichRoundData()             │ Callback 2: updateRoundData()
+            ▼                                           ▼
+┌───────────────────────────┐               ┌───────────────────────────┐
+│     ETHEREUM SEPOLIA      │               │      REACTIVE LASNA       │
+│  Chain ID: 11155111       │               │     Chain ID: 5318007     │
+│  ┌─────────────────────┐  │               │  ┌─────────────────────┐  │
+│  │ Chainlink Aggregator│  │               │  │     FeedProxy       │  │
+│  │  (ETH/USD Feed)     │  │               │  │ (AggregatorV3)      │  │
+│  └─────────────────────┘  │               │  └─────────────────────┘  │
+│            │              │               │            ▲              │
+│  ┌─────────────────────┐  │               │            │              │
+│  │ EnhancedOriginHelper│  │               │            │              │
+│  │  • Enriches events  │──┼───────────────┼────────────┘              │
+│  └─────────────────────┘  │               │                           │
+└───────────────────────────┘               └───────────────────────────┘
+```
+
+### Contract Responsibilities
+
+| Contract | Chain | Responsibility |
+|----------|-------|----------------|
+| **EnhancedOriginHelper** | Sepolia | Fetches complete round data from Chainlink, emits `RoundDataReceived` event |
+| **ChainlinkMirrorReactive** | Lasna | Subscribes to events, coordinates two-callback flow, handles cron fallback |
+| **FeedProxy** | Lasna | Stores mirrored data, implements `AggregatorV3Interface`, validates updates |
 
 ## Prerequisites
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation) (forge, cast, anvil)
-- Node.js (optional, for scripts)
+- Node.js v18+ (optional, for scripts)
+- Testnet ETH on Sepolia (for deploying EnhancedOriginHelper)
+- Testnet REACT on Lasna (for deploying FeedProxy and ChainlinkMirrorReactive)
+
+### Getting Testnet Tokens
+
+- **Sepolia ETH**: Use [Alchemy Sepolia Faucet](https://sepoliafaucet.com/) or [Infura Sepolia Faucet](https://www.infura.io/faucet/sepolia)
+- **Lasna REACT**: Use [Reactive Network Faucet](https://faucet.rnk.dev/)
 
 ## Installation
 
-```shell
+```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/your-org/reactive-oracle.git
 cd reactive-oracle
 
-# Install dependencies
+# Install Foundry dependencies
 forge install
-```
 
-## Setup
-
-1. Copy the environment template:
-```shell
+# Copy environment template
 cp .env.example .env
-```
 
-2. Configure your RPC URLs and private keys in `.env`
+# Edit .env with your configuration (optional for local testing)
+```
 
 ## Usage
 
 ### Build
 
-```shell
+```bash
 forge build
 ```
 
 ### Test
 
-```shell
+```bash
+# Run all tests (95 unit tests)
 forge test
+
+# Run with verbosity
+forge test -vvv
+
+# Run fork tests against Sepolia
+forge test --match-path "test/fork/*" -vvv
+
+# Generate coverage report
+forge coverage
 ```
 
-### Format
+### Deployment
 
-```shell
-forge fmt
+The deployment requires 3 contracts across 2 chains. Use the Makefile for guided deployment:
+
+```bash
+# Show deployment plan with predicted addresses
+make deploy-plan
+
+# Full deployment sequence (follow prompts)
+make deploy-all
 ```
 
-## Deployed Contracts (Testnet)
+**Individual deployment targets:**
+
+```bash
+make deploy-feedproxy   # Deploy FeedProxy to Lasna
+make deploy-helper      # Deploy EnhancedOriginHelper to Sepolia (with verification)
+make deploy-reactive    # Deploy ChainlinkMirrorReactive to Lasna
+```
+
+**Expected output from `make deploy-plan`:**
+
+```
+Predicted addresses for deployer 0xYourAddress:
+  FeedProxy:               0x...
+  EnhancedOriginHelper:    0x...
+  ChainlinkMirrorReactive: 0x...
+```
+
+### Verification Commands
+
+After deployment, verify the system is configured correctly:
+
+```bash
+# Check FeedProxy configuration (Lasna)
+cast call 0x21Bd1Ec9C419B09423BD813D6F20Ac872ED39EDd "getReactiveContract()(address)" --rpc-url https://lasna-rpc.rnk.dev
+
+# Check FeedProxy decimals and description (Lasna)
+cast call 0x21Bd1Ec9C419B09423BD813D6F20Ac872ED39EDd "decimals()(uint8)" --rpc-url https://lasna-rpc.rnk.dev
+cast call 0x21Bd1Ec9C419B09423BD813D6F20Ac872ED39EDd "description()(string)" --rpc-url https://lasna-rpc.rnk.dev
+
+# Check EnhancedOriginHelper configuration (Sepolia)
+cast call 0x3e4391d52696824794C961f7Fd71DC882f69B0C4 "getReactiveContract()(address)" --rpc-url https://ethereum-sepolia.publicnode.com
+
+# Check ChainlinkMirrorReactive last processed round (Lasna)
+cast call 0xE8E514E105E5472AbA008bE55702B2668b41a1b0 "getLastProcessedRound()(uint80)" --rpc-url https://lasna-rpc.rnk.dev
+
+# Compare with Chainlink source (Sepolia)
+cast call 0x694AA1769357215DE4FAC081bf1f309aDC325306 "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url https://ethereum-sepolia.publicnode.com
+
+# Check FeedProxy latest round data (Lasna)
+cast call 0x21Bd1Ec9C419B09423BD813D6F20Ac872ED39EDd "latestRoundData()(uint80,int256,uint256,uint256,uint80)" --rpc-url https://lasna-rpc.rnk.dev
+```
+
+## Deployed Contracts (Testnet v5)
 
 | Contract | Chain | Address | Explorer |
 |----------|-------|---------|----------|
-| EnhancedOriginHelper | Sepolia (11155111) | `0xE77b96691CFC9547D9979579F91996ef812AB13c` | [Etherscan](https://sepolia.etherscan.io/address/0xE77b96691CFC9547D9979579F91996ef812AB13c) |
-| FeedProxy | Lasna (5318007) | `0x96b86F9106Ec53BA0Aa5264FDa9AEA83CFe2aFD7` | [Reactscan](https://lasna.reactscan.net/address/0x96b86F9106Ec53BA0Aa5264FDa9AEA83CFe2aFD7) |
-| ChainlinkMirrorReactive | Sepolia (11155111) | `0x67882916AbF31B4E5557a8A956b203708b5fcD6d` | [Etherscan](https://sepolia.etherscan.io/address/0x67882916AbF31B4E5557a8A956b203708b5fcD6d) |
+| EnhancedOriginHelper | Sepolia (11155111) | `0x3e4391d52696824794C961f7Fd71DC882f69B0C4` | [Etherscan](https://sepolia.etherscan.io/address/0x3e4391d52696824794C961f7Fd71DC882f69B0C4) |
+| FeedProxy | Lasna (5318007) | `0x21Bd1Ec9C419B09423BD813D6F20Ac872ED39EDd` | [Reactscan](https://lasna.reactscan.net/address/0x21Bd1Ec9C419B09423BD813D6F20Ac872ED39EDd) |
+| ChainlinkMirrorReactive | Lasna (5318007) | `0xE8E514E105E5472AbA008bE55702B2668b41a1b0` | [Reactscan](https://lasna.reactscan.net/address/0xE8E514E105E5472AbA008bE55702B2668b41a1b0) |
 
 ### Deployment Transaction Hashes
 
-- **FeedProxy**: `0x8f23112febd619bf02bcfa4e20c5c17c1df3ed0a90be4d6d33f0658f1d75bf58`
-- **EnhancedOriginHelper**: `0x3edaddabeda77074e4f1579e155312faa1ed242346dce604effc170f4e1e5ec9`
-- **ChainlinkMirrorReactive**: `0x89bb2f6f439ab9b9fecad1fb7a5d66bf077541953e5d60fe1b0b43173e01dc5d`
+- **EnhancedOriginHelper**: [`0x472f49575fff8f242a6e032575981a21ee46e51a9c6cc737632189dd89b20801`](https://sepolia.etherscan.io/tx/0x472f49575fff8f242a6e032575981a21ee46e51a9c6cc737632189dd89b20801)
+- **FeedProxy**: [`0x5781c036252454dfee1520a87536fc850d181eeb99ad2a0a2b248b41d53bf489`](https://lasna.reactscan.net/tx/0x5781c036252454dfee1520a87536fc850d181eeb99ad2a0a2b248b41d53bf489)
+- **ChainlinkMirrorReactive**: [`0x581dc3d0eecb0e096ef76530e638a074375564788e548211c32d14491b9c1016`](https://lasna.reactscan.net/tx/0x581dc3d0eecb0e096ef76530e638a074375564788e548211c32d14491b9c1016)
+- **initSubscriptions()**: [`0x6b98ac12195e8bca8c245c55d0be447ea3e3d3eb09da9dfc8260f6aaff253b2a`](https://lasna.reactscan.net/tx/0x6b98ac12195e8bca8c245c55d0be447ea3e3d3eb09da9dfc8260f6aaff253b2a)
 
 ## Project Structure
 
 ```
-src/
-├── interfaces/     # Contract interfaces
-├── origin/         # Origin chain contracts (Sepolia)
-├── destination/    # Destination chain contracts (Lasna)
-└── reactive/       # Reactive Network contracts
-
-test/
-├── unit/           # Unit tests
-├── integration/    # Integration tests
-├── fork/           # Fork tests
-└── mocks/          # Mock contracts
-
-script/             # Deployment scripts
+reactive-oracle/
+├── docs/
+│   ├── architecture.md      # System architecture details
+│   ├── workflow.md          # End-to-end workflow documentation
+│   ├── runbook.md           # Operations and troubleshooting
+│   └── architecture/        # Sharded architecture docs (detailed)
+├── src/
+│   ├── Constants.sol        # System-wide constants
+│   ├── interfaces/          # Contract interfaces
+│   ├── destination/         # FeedProxy.sol
+│   ├── origin/              # EnhancedOriginHelper.sol
+│   └── reactive/            # ChainlinkMirrorReactive.sol
+├── test/
+│   ├── unit/                # 95 unit tests
+│   ├── integration/         # Cross-contract flow tests
+│   ├── fork/                # Sepolia fork tests
+│   └── mocks/               # Mock contracts
+├── script/                  # Deployment scripts
+├── .env.example             # Environment template with deployed addresses
+└── Makefile                 # Build automation
 ```
 
-## Deployment
+## Documentation
 
-See `make help` for available deployment commands:
+- **[Architecture](docs/architecture.md)** - System design, contract interactions, security model
+- **[Workflow](docs/workflow.md)** - End-to-end flow with transaction examples
+- **[Runbook](docs/runbook.md)** - Operations, troubleshooting, health checks
+
+## Testing
+
+The project includes comprehensive test coverage:
+
+- **Unit Tests**: 95 tests covering all contract functions
+- **Integration Tests**: Cross-contract flow validation
+- **Fork Tests**: Tests against live Sepolia Chainlink feeds
 
 ```bash
-make deploy-plan       # Show deployment plan with predicted addresses
-make deploy-feedproxy  # Deploy FeedProxy to Lasna
-make deploy-helper     # Deploy EnhancedOriginHelper to Sepolia
-make deploy-reactive   # Deploy ChainlinkMirrorReactive
+# Quick test run
+forge test
+
+# Full test with gas reports
+forge test -vvv --gas-report
 ```
 
 ## License

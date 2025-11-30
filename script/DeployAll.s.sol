@@ -11,6 +11,7 @@ import {
     SEPOLIA_CHAIN_ID,
     LASNA_CHAIN_ID,
     CHAINLINK_ETH_USD,
+    CHAINLINK_ETH_USD_AGGREGATOR,
     CALLBACK_PROXY_SEPOLIA
 } from "../src/Constants.sol";
 
@@ -172,6 +173,7 @@ contract DeployAll is Script {
         console.log("Origin Chain ID:", SEPOLIA_CHAIN_ID);
         console.log("Destination Chain ID:", LASNA_CHAIN_ID);
         console.log("Chainlink Feed:", CHAINLINK_ETH_USD);
+        console.log("Chainlink Aggregator:", CHAINLINK_ETH_USD_AGGREGATOR);
         console.log("Origin Helper:", originHelper);
         console.log("Feed Proxy:", feedProxy);
 
@@ -180,6 +182,7 @@ contract DeployAll is Script {
             SEPOLIA_CHAIN_ID,
             LASNA_CHAIN_ID,
             CHAINLINK_ETH_USD,
+            CHAINLINK_ETH_USD_AGGREGATOR,
             originHelper,
             feedProxy
         );

@@ -10,6 +10,9 @@ uint256 constant REACTIVE_CHAIN_ID = 5318007;
 
 // Chainlink Addresses (Sepolia)
 address constant CHAINLINK_ETH_USD = 0x694AA1769357215DE4FAC081bf1f309aDC325306;
+// Chainlink Aggregator (the actual contract that emits AnswerUpdated events)
+// Query via: cast call 0x694AA1769357215DE4FAC081bf1f309aDC325306 "aggregator()(address)" --rpc-url $SEPOLIA_RPC_URL
+address constant CHAINLINK_ETH_USD_AGGREGATOR = 0x719E22E3D4b690E5d96cCb40619180B5427F14AE;
 
 // Reactive Network System Contracts
 address constant SYSTEM_CONTRACT = 0x0000000000000000000000000000000000fffFfF;
